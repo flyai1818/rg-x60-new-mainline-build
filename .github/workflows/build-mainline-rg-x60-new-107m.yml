@@ -47,25 +47,50 @@ jobs:
           sudo docker image prune --all --force
           df -h
 
+      - name: Restore apt package cache
+        uses: actions/cache/restore@v4
+        id: apt-cache
+        with:
+          path: ~/apt-archives
+          key: apt-archives-${{ runner.os }}-v1-${{ hashFiles('.github/workflows/build-mainline-rg-x60-new-107m.yml') }}
+          restore-keys: |
+            apt-archives-${{ runner.os }}-v1-
+
       - name: Install build dependencies
         env:
           DEBIAN_FRONTEND: noninteractive
         shell: bash
         run: |
           set -euo pipefail
+          # Keep downloaded .deb files in a user-owned cache directory so
+          # actions/cache can restore and save them.
+          mkdir -p "$HOME/apt-archives/partial"
+          # apt drops to the _apt user for downloads; let it write partial files.
+          sudo chown _apt "$HOME/apt-archives/partial" || true
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            ack antlr3 asciidoc autoconf automake autopoint binutils bison \
-            build-essential bzip2 ccache clang cmake cpio curl device-tree-compiler \
-            file flex g++ gawk gcc-multilib g++-multilib genisoimage gettext git \
-            gperf help2man intltool jq lib32gcc-s1 libc6-dev-i386 libelf-dev \
-            libglib2.0-dev libgmp3-dev libgnutls28-dev libltdl-dev libmpc-dev \
-            libmpfr-dev libncurses-dev libpython3-dev libreadline-dev libssl-dev \
-            libtool libyaml-dev lld llvm lrzsz msmtp nano ninja-build p7zip-full \
-            patch pkgconf python3 python3-docutils python3-ply python3-pyelftools \
-            python3-setuptools qemu-utils re2c rsync scons squashfs-tools subversion \
-            swig texinfo time uglifyjs unzip vim wget xmlto xsltproc xxd zlib1g-dev zstd
+            -o Dir::Cache::Archives="$HOME/apt-archives" \
+            -o Acquire::Retries=3 \
+            autoconf automake autopoint binutils bison build-essential bzip2 \
+            ccache clang cmake cpio curl device-tree-compiler file flex g++ gawk \
+            gcc-multilib g++-multilib gettext git gperf help2man intltool jq \
+            lib32gcc-s1 libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev \
+            libgnutls28-dev libltdl-dev libmpc-dev libmpfr-dev libncurses-dev \
+            libpython3-dev libreadline-dev libssl-dev libtool libyaml-dev lld llvm \
+            ninja-build p7zip-full patch pkgconf python3 python3-docutils \
+            python3-ply python3-pyelftools python3-setuptools re2c rsync \
+            scons squashfs-tools swig texinfo time uglifyjs unzip wget xsltproc \
+            xxd zlib1g-dev zstd
+          # Give the cache directory back to the runner user (apt ran as root).
+          sudo chown -R "$(id -u):$(id -g)" "$HOME/apt-archives"
           sudo apt-get clean
+
+      - name: Save apt package cache
+        if: ${{ steps.apt-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: ~/apt-archives
+          key: apt-archives-${{ runner.os }}-v1-${{ hashFiles('.github/workflows/build-mainline-rg-x60-new-107m.yml') }}
 
       - name: Clone ImmortalWrt mainline
         id: source
@@ -163,10 +188,19 @@ jobs:
           install -Dm0755 files/etc/uci-defaults/99-rg-x60-wireless-country \
             "$OPENWRT_DIR/files/etc/uci-defaults/99-rg-x60-wireless-country"
           # Runtime defaults matching the kernel built-in BBR and FQ options.
+          # TCP tuning for single-flow proxy throughput. 16 MiB buffers cover a
+          # bandwidth-delay product of ~470 Mbit/s x 200 ms (~11.75 MB).
           printf '%s\n' \
             'net.ipv4.tcp_congestion_control=bbr' \
             'net.core.default_qdisc=fq' \
-            > "$OPENWRT_DIR/files/etc/sysctl.d/90-tcp-bbr-fq.conf"
+            'net.ipv4.tcp_window_scaling=1' \
+            'net.ipv4.tcp_sack=1' \
+            'net.core.rmem_max=16777216' \
+            'net.core.wmem_max=16777216' \
+            'net.ipv4.tcp_rmem=4096 131072 16777216' \
+            'net.ipv4.tcp_wmem=4096 65536 16777216' \
+            'net.core.netdev_max_backlog=10000' \
+            > "$OPENWRT_DIR/files/etc/sysctl.d/90-tcp-tuning.conf"
           ! grep -Eq "option (username|password)" "$OPENWRT_DIR/files/etc/config/network"
           grep -Fq "192.168.10.1/24" "$OPENWRT_DIR/files/etc/config/network"
 
@@ -217,7 +251,7 @@ jobs:
           set -euo pipefail
           mkdir -p "$CCACHE_DIR"
           ccache --set-config=cache_dir="$CCACHE_DIR"
-          ccache --set-config=max_size=5G
+          ccache --set-config=max_size=15G
           ccache --set-config=compression=true
           ccache --zero-stats
 
@@ -331,11 +365,11 @@ jobs:
         run: ccache --show-stats || true
 
       - name: Save compiler cache
-        if: ${{ always() && inputs.clean_build == false && steps.ccache-cache.outputs.cache-hit != 'true' && hashFiles('openwrt/.ccache/**') != '' }}
+        if: ${{ always() && inputs.clean_build == false && hashFiles('openwrt/.ccache/**') != '' }}
         uses: actions/cache/save@v4
         with:
           path: openwrt/.ccache
-          key: ${{ steps.ccache-cache.outputs.cache-primary-key }}
+          key: mainline-rgx60new-107m-ccache-${{ runner.os }}-${{ steps.source.outputs.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Debug SSH on failure
         if: ${{ failure() && inputs.ssh_debug == true }}
