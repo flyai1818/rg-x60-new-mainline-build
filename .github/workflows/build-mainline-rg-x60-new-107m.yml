@@ -3,14 +3,6 @@ name: Build ImmortalWrt Mainline RG-X60 New (107MiB)
 on:
   workflow_dispatch:
     inputs:
-      firmware_flavor:
-        description: "Firmware flavor"
-        required: true
-        default: chizi-shared
-        type: choice
-        options:
-          - chizi-shared
-          - dae-honk-compat
       clean_build:
         description: "Ignore ccache for this build"
         required: true
@@ -26,7 +18,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: mainline-rg-x60-new-107m-${{ github.ref }}-${{ inputs.firmware_flavor }}
+  group: mainline-rg-x60-new-107m-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -34,7 +26,6 @@ env:
   OPENWRT_BRANCH: master
   OPENWRT_DIR: openwrt
   PROFILE: ruijie_rg-x60-new-mtkuboot
-  BUILD_FLAVOR: ${{ inputs.firmware_flavor }}
   CCACHE_DIR: ${{ github.workspace }}/.ccache
   TZ: Asia/Taipei
 
@@ -108,10 +99,10 @@ jobs:
         id: ccache-cache
         with:
           path: .ccache
-          key: mainline-rgx60new-107m-${{ inputs.firmware_flavor }}-ccache-${{ runner.os }}-${{ steps.source.outputs.sha }}-${{ hashFiles('defconfig/mainline-rg-x60-new-107m*.config', 'files/**', 'mainline/**', 'scripts/**') }}
+          key: mainline-rgx60new-107m-ccache-${{ runner.os }}-${{ steps.source.outputs.sha }}-${{ hashFiles('defconfig/mainline-rg-x60-new-107m.config', 'files/**', 'mainline/**', 'scripts/**', '.github/workflows/build-mainline-rg-x60-new-107m.yml') }}
           restore-keys: |
-            mainline-rgx60new-107m-${{ inputs.firmware_flavor }}-ccache-${{ runner.os }}-${{ steps.source.outputs.sha }}-
-            mainline-rgx60new-107m-${{ inputs.firmware_flavor }}-ccache-${{ runner.os }}-
+            mainline-rgx60new-107m-ccache-${{ runner.os }}-${{ steps.source.outputs.sha }}-
+            mainline-rgx60new-107m-ccache-${{ runner.os }}-
 
       - name: Apply RG-X60-new 107MiB mainline board support
         shell: bash
@@ -121,16 +112,56 @@ jobs:
           grep -Fq 'reg = <0x680000 0x6b00000>;' \
             "$OPENWRT_DIR/target/linux/mediatek/dts/mt7986a-ruijie-rg-x60-new-mtkuboot.dts"
 
+      - name: Apply kernel options that defconfig cannot select
+        working-directory: ${{ env.OPENWRT_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # These are plain kernel symbols, not OpenWrt CONFIG_KERNEL_* options,
+          # so they are appended to the target kernel config. Verified after build.
+          shopt -s nullglob
+          configs=(target/linux/mediatek/config-*)
+          test "${#configs[@]}" -eq 1
+          kconf="${configs[0]}"
+          echo "Kernel target config: $kconf"
+
+          # Remove the cubic default so the BBR default is the only choice.
+          sed -i -e '/^CONFIG_DEFAULT_CUBIC=y$/d' \
+                 -e '/^# CONFIG_DEFAULT_BBR is not set$/d' \
+                 -e '/^CONFIG_DEFAULT_BBR=/d' "$kconf"
+
+          printf '%s\n' \
+            '' \
+            '# RG-X60 New mainline: TProxy, FQ and BBR (applied by the build workflow).' \
+            'CONFIG_NF_TPROXY_IPV4=m' \
+            'CONFIG_NFT_TPROXY=m' \
+            'CONFIG_NFT_SOCKET=m' \
+            'CONFIG_NET_SCH_FQ=y' \
+            'CONFIG_TCP_CONG_BBR=y' \
+            'CONFIG_DEFAULT_BBR=y' >> "$kconf"
+          for s in '^CONFIG_NF_TPROXY_IPV4=m$' '^CONFIG_NFT_TPROXY=m$' \
+                   '^CONFIG_NFT_SOCKET=m$' '^CONFIG_NET_SCH_FQ=y$' \
+                   '^CONFIG_TCP_CONG_BBR=y$' '^CONFIG_DEFAULT_BBR=y$'; do
+            grep -Eq "$s" "$kconf"
+          done
+
       - name: Apply first-boot defaults
         shell: bash
         run: |
           set -euo pipefail
           test -f files/etc/config/network
           test -f files/etc/uci-defaults/99-rg-x60-wireless-country
-          mkdir -p "$OPENWRT_DIR/files/etc/config" "$OPENWRT_DIR/files/etc/uci-defaults"
+          mkdir -p "$OPENWRT_DIR/files/etc/config" \
+            "$OPENWRT_DIR/files/etc/uci-defaults" \
+            "$OPENWRT_DIR/files/etc/sysctl.d"
           cp files/etc/config/network "$OPENWRT_DIR/files/etc/config/network"
           install -Dm0755 files/etc/uci-defaults/99-rg-x60-wireless-country \
             "$OPENWRT_DIR/files/etc/uci-defaults/99-rg-x60-wireless-country"
+          # Runtime defaults matching the kernel built-in BBR and FQ options.
+          printf '%s\n' \
+            'net.ipv4.tcp_congestion_control=bbr' \
+            'net.core.default_qdisc=fq' \
+            > "$OPENWRT_DIR/files/etc/sysctl.d/90-tcp-bbr-fq.conf"
           ! grep -Eq "option (username|password)" "$OPENWRT_DIR/files/etc/config/network"
           grep -Fq "192.168.10.1/24" "$OPENWRT_DIR/files/etc/config/network"
 
@@ -148,33 +179,32 @@ jobs:
           set -euo pipefail
           bash scripts/remove-unused-luci-pages.sh "$OPENWRT_DIR"
 
-      - name: Resolve selected firmware configuration
+      - name: Resolve firmware configuration
         working-directory: ${{ env.OPENWRT_DIR }}
         shell: bash
         run: |
           set -euo pipefail
-          case "$BUILD_FLAVOR" in
-            chizi-shared)
-              config_file=defconfig/mainline-rg-x60-new-107m.config
-              ;;
-            dae-honk-compat)
-              config_file=defconfig/mainline-rg-x60-new-107m-dae-honk.config
-              ;;
-            *)
-              echo "Unknown firmware flavor: $BUILD_FLAVOR" >&2
-              exit 1
-              ;;
-          esac
-
-          cp "../$config_file" .config
+          cp ../defconfig/mainline-rg-x60-new-107m.config .config
           make defconfig
-          # Upstream Kconfig dependencies change over time. Keep the resolved
-          # configuration as an artifact, but do not reject a build based on
-          # project-maintained symbol assertions.
-          cp .config "../mainline-rg-x60-new-107m-$BUILD_FLAVOR.config.full"
+          cp .config ../mainline-rg-x60-new-107m.config.full
 
-          echo "Selected flavor: $BUILD_FLAVOR"
           grep -E '^CONFIG_TARGET_mediatek_filogic_DEVICE_.*=y$' .config
+
+          # Fail early if a requested OpenWrt symbol was silently dropped by defconfig.
+          for s in \
+            CONFIG_KERNEL_NETKIT=y \
+            CONFIG_KERNEL_KPROBES=y \
+            CONFIG_KERNEL_DEBUG_INFO_BTF=y \
+            CONFIG_KERNEL_XDP_SOCKETS=y \
+            CONFIG_KERNEL_BPF_STREAM_PARSER=y \
+            CONFIG_PACKAGE_kmod-tun=y \
+            CONFIG_PACKAGE_kmod-nf-tproxy=y \
+            CONFIG_PACKAGE_kmod-nft-tproxy=y \
+            CONFIG_PACKAGE_kmod-nf-socket=y \
+            CONFIG_PACKAGE_kmod-nft-socket=y \
+            CONFIG_PACKAGE_kmod-veth=y; do
+            grep -Fqx "$s" .config || { echo "Missing in resolved config: $s" >&2; exit 1; }
+          done
 
       - name: Configure ccache
         shell: bash
@@ -211,6 +241,33 @@ jobs:
           set -o pipefail
           make -j"$(nproc)" 2>&1 | tee ../build.log
 
+      - name: Verify final kernel options
+        working-directory: ${{ env.OPENWRT_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          kernel_config=$(find build_dir -type f -path '*/linux-mediatek_filogic/linux-*/.config' -print -quit)
+          test -n "$kernel_config"
+          check() {
+            grep -Eq "$1" "$kernel_config" || { echo "Kernel option check failed: $1" >&2; exit 1; }
+          }
+          check '^CONFIG_TCP_CONG_BBR=y$'
+          check '^CONFIG_DEFAULT_TCP_CONG="bbr"$'
+          check '^CONFIG_NET_SCH_FQ=y$'
+          check '^CONFIG_NF_TPROXY_IPV4=m$'
+          check '^CONFIG_NFT_TPROXY=m$'
+          check '^CONFIG_NFT_SOCKET=m$'
+          check '^CONFIG_NETKIT=y$'
+          check '^CONFIG_TUN=m$'
+          check '^CONFIG_BPF_JIT=y$'
+          check '^CONFIG_BPF_SYSCALL=y$'
+          check '^CONFIG_KPROBES=y$'
+          check '^CONFIG_XDP_SOCKETS=y$'
+          check '^CONFIG_DEBUG_INFO_BTF=y$'
+          check '^CONFIG_NET_CLS_BPF=m$'
+          check '^CONFIG_NET_CLS_ACT=y$'
+          echo "All requested kernel options are present."
+
       - name: Collect firmware artifacts
         working-directory: ${{ env.OPENWRT_DIR }}
         shell: bash
@@ -218,8 +275,6 @@ jobs:
           set -euo pipefail
           . ../source-info.env
 
-          # The resolved configuration is kept as an informational artifact.
-          # At this point require only the two actual flashable images.
           image=$(find bin/targets/mediatek/filogic -maxdepth 1 -type f \
             -name '*ruijie_rg-x60-new-mtkuboot-squashfs-sysupgrade.bin' -print -quit)
           initramfs=$(find bin/targets/mediatek/filogic -maxdepth 1 -type f \
@@ -228,19 +283,16 @@ jobs:
           test -n "$initramfs"
 
           mkdir -p ../artifacts
-          # Informational only: preserve the resolved Linux configuration.
-          # Do not make builds conditional on individual kernel symbols.
           kernel_config=$(find build_dir -type f \
             -path '*/linux-mediatek_filogic/linux-*/.config' -print -quit)
           if [ -n "$kernel_config" ]; then
             cp "$kernel_config" ../artifacts/kernel.config
           else
-            printf '%s\n' 'Final kernel .config was not located; this does not affect the firmware build.' \
-              > ../artifacts/KERNEL-CONFIG-NOT-FOUND.txt
+            printf '%s\n' 'Final kernel .config was not located.' > ../artifacts/KERNEL-CONFIG-NOT-FOUND.txt
           fi
 
-          cp "$image" "../artifacts/RG-X60-New-mainline-107M-$BUILD_FLAVOR-sysupgrade.bin"
-          cp "$initramfs" "../artifacts/RG-X60-New-mainline-107M-$BUILD_FLAVOR-initramfs-kernel.bin"
+          cp "$image" "../artifacts/RG-X60-New-mainline-107M-sysupgrade.bin"
+          cp "$initramfs" "../artifacts/RG-X60-New-mainline-107M-initramfs-kernel.bin"
 
           manifest=$(find bin/targets/mediatek/filogic -maxdepth 1 -type f \
             -name '*ruijie_rg-x60-new-mtkuboot*.manifest' -print -quit || true)
@@ -248,14 +300,14 @@ jobs:
             cp "$manifest" ../artifacts/
           fi
 
-          cp "../mainline-rg-x60-new-107m-$BUILD_FLAVOR.config.full" ../artifacts/config.full
+          cp "../mainline-rg-x60-new-107m.config.full" ../artifacts/config.full
           cp bin/targets/mediatek/filogic/sha256sums ../artifacts/upstream-sha256sums
           {
             echo "source_repository=$OPENWRT_REPO"
             echo "source_branch=$OPENWRT_BRANCH"
             echo "source_commit=$SOURCE_COMMIT"
             echo "device_profile=$PROFILE"
-            echo "firmware_flavor=$BUILD_FLAVOR"
+            echo "firmware_profile=ebpf-tproxy-tun-bbr"
             echo "compatible=ruijie,rg-x60-new-mtkuboot"
             echo "ubi_offset=0x680000"
             echo "ubi_size=0x6b00000"
@@ -288,7 +340,7 @@ jobs:
       - name: Upload firmware and verification files
         uses: actions/upload-artifact@v4
         with:
-          name: RG-X60-New-mainline-107M-${{ inputs.firmware_flavor }}-${{ steps.source.outputs.short_sha }}
+          name: RG-X60-New-mainline-107M-${{ steps.source.outputs.short_sha }}
           path: artifacts/
           if-no-files-found: error
           retention-days: 30
@@ -300,7 +352,7 @@ jobs:
           name: RG-X60-New-mainline-107M-failure-logs-${{ github.run_number }}
           path: |
             build.log
-            mainline-rg-x60-new-107m-*.config.full
+            mainline-rg-x60-new-107m.config.full
             openwrt/.config
             openwrt/logs/
           if-no-files-found: ignore
