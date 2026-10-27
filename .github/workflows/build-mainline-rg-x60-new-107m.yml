@@ -26,7 +26,7 @@ env:
   OPENWRT_BRANCH: master
   OPENWRT_DIR: openwrt
   PROFILE: ruijie_rg-x60-new-mtkuboot
-  CCACHE_DIR: ${{ github.workspace }}/.ccache
+  CCACHE_DIR: ${{ github.workspace }}/openwrt/.ccache
   TZ: Asia/Taipei
 
 jobs:
@@ -98,7 +98,7 @@ jobs:
         uses: actions/cache/restore@v4
         id: ccache-cache
         with:
-          path: .ccache
+          path: openwrt/.ccache
           key: mainline-rgx60new-107m-ccache-${{ runner.os }}-${{ steps.source.outputs.sha }}-${{ hashFiles('defconfig/mainline-rg-x60-new-107m.config', 'files/**', 'mainline/**', 'scripts/**', '.github/workflows/build-mainline-rg-x60-new-107m.yml') }}
           restore-keys: |
             mainline-rgx60new-107m-ccache-${{ runner.os }}-${{ steps.source.outputs.sha }}-
@@ -233,7 +233,7 @@ jobs:
           du -sh dl
 
       - name: Save source download cache
-        if: ${{ success() && steps.dl-cache.outputs.cache-hit != 'true' }}
+        if: ${{ always() && steps.dl-cache.outputs.cache-hit != 'true' && hashFiles('openwrt/dl/*') != '' }}
         uses: actions/cache/save@v4
         with:
           path: openwrt/dl
@@ -331,10 +331,10 @@ jobs:
         run: ccache --show-stats || true
 
       - name: Save compiler cache
-        if: ${{ success() && inputs.clean_build == false && steps.ccache-cache.outputs.cache-hit != 'true' }}
+        if: ${{ always() && inputs.clean_build == false && steps.ccache-cache.outputs.cache-hit != 'true' && hashFiles('openwrt/.ccache/**') != '' }}
         uses: actions/cache/save@v4
         with:
-          path: .ccache
+          path: openwrt/.ccache
           key: ${{ steps.ccache-cache.outputs.cache-primary-key }}
 
       - name: Debug SSH on failure
