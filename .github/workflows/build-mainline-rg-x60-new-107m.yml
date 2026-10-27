@@ -119,26 +119,31 @@ jobs:
           set -euo pipefail
           # These are plain kernel symbols, not OpenWrt CONFIG_KERNEL_* options,
           # so they are appended to the target kernel config. Verified after build.
-          shopt -s nullglob
-          configs=(target/linux/mediatek/config-*)
-          test "${#configs[@]}" -eq 1
-          kconf="${configs[0]}"
+          # The mediatek target has no top-level config-*; the filogic subtarget
+          # config (config-<KERNEL_PATCHVER>) is the last file merged after the
+          # generic config, so later lines here override generic defaults.
+          patchver=$(sed -n 's/^KERNEL_PATCHVER[[:space:]]*[:?]*=[[:space:]]*//p' \
+            target/linux/mediatek/Makefile | head -n1 | tr -d '[:space:]')
+          kconf="target/linux/mediatek/filogic/config-${patchver}"
+          if [ -z "$patchver" ] || [ ! -f "$kconf" ]; then
+            echo "Cannot locate filogic kernel config for KERNEL_PATCHVER=${patchver:-<empty>}" >&2
+            exit 1
+          fi
           echo "Kernel target config: $kconf"
 
-          # Remove the cubic default so the BBR default is the only choice.
-          sed -i -e '/^CONFIG_DEFAULT_CUBIC=y$/d' \
-                 -e '/^# CONFIG_DEFAULT_BBR is not set$/d' \
-                 -e '/^CONFIG_DEFAULT_BBR=/d' "$kconf"
-
+          # generic/config-6.18 sets CONFIG_DEFAULT_CUBIC=y; override it so the
+          # BBR choice is the only default.
           printf '%s\n' \
             '' \
             '# RG-X60 New mainline: TProxy, FQ and BBR (applied by the build workflow).' \
+            '# CONFIG_DEFAULT_CUBIC is not set' \
             'CONFIG_NF_TPROXY_IPV4=m' \
             'CONFIG_NFT_TPROXY=m' \
             'CONFIG_NFT_SOCKET=m' \
             'CONFIG_NET_SCH_FQ=y' \
             'CONFIG_TCP_CONG_BBR=y' \
-            'CONFIG_DEFAULT_BBR=y' >> "$kconf"
+            'CONFIG_DEFAULT_BBR=y' \
+            'CONFIG_DEFAULT_TCP_CONG="bbr"' >> "$kconf"
           for s in '^CONFIG_NF_TPROXY_IPV4=m$' '^CONFIG_NFT_TPROXY=m$' \
                    '^CONFIG_NFT_SOCKET=m$' '^CONFIG_NET_SCH_FQ=y$' \
                    '^CONFIG_TCP_CONG_BBR=y$' '^CONFIG_DEFAULT_BBR=y$'; do
