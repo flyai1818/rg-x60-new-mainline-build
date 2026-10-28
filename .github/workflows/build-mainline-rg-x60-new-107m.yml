@@ -201,6 +201,24 @@ jobs:
             'net.ipv4.tcp_wmem=4096 65536 33554432' \
             'net.core.netdev_max_backlog=10000' \
             > "$OPENWRT_DIR/files/etc/sysctl.d/90-tcp-tuning.conf"
+          # EEE off on the WAN PHY (Airoha EN8811H): EEE on this 2.5G link was
+          # associated with link flaps and PPPoE redials. Applied at boot and when
+          # eth1 is registered.
+          mkdir -p "$OPENWRT_DIR/files/etc/hotplug.d/net"
+          printf '%s\n' \
+            '#!/bin/sh' \
+            '[ "$ACTION" = add ] || exit 0' \
+            '[ "$DEVICENAME" = eth1 ] || exit 0' \
+            'ethtool --set-eee eth1 eee off >/dev/null 2>&1' \
+            > "$OPENWRT_DIR/files/etc/hotplug.d/net/60-eth1-eee-off"
+          chmod 0755 "$OPENWRT_DIR/files/etc/hotplug.d/net/60-eth1-eee-off"
+          printf '%s\n' \
+            '#!/bin/sh' \
+            '# Disable EEE on the WAN PHY (see hotplug script).' \
+            'ethtool --set-eee eth1 eee off >/dev/null 2>&1 || true' \
+            'exit 0' \
+            > "$OPENWRT_DIR/files/etc/rc.local"
+          chmod 0755 "$OPENWRT_DIR/files/etc/rc.local"
           ! grep -Eq "option (username|password)" "$OPENWRT_DIR/files/etc/config/network"
           grep -Fq "192.168.10.1/24" "$OPENWRT_DIR/files/etc/config/network"
 
@@ -318,6 +336,12 @@ jobs:
             grep -Fxq "$line" "$sysctl_conf" || { echo "sysctl line missing in rootfs: $line" >&2; exit 1; }
           done
           echo "TCP buffer sysctl defaults are present in the rootfs: $sysctl_conf"
+          for f in etc/hotplug.d/net/60-eth1-eee-off etc/rc.local usr/sbin/ethtool; do
+            test -n "$(find build_dir -path "*/root-mediatek*/$f" -print -quit)" \
+              || { echo "$f missing from rootfs" >&2; exit 1; }
+          done
+          echo "EEE-off boot hooks and ethtool are present in the rootfs."
+
 
       - name: Collect firmware artifacts
         working-directory: ${{ env.OPENWRT_DIR }}
