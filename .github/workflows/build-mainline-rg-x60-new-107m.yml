@@ -118,6 +118,22 @@ jobs:
             mainline-rgx60new-107m-dl-${{ runner.os }}-
             mainline-rgx60new-107m-dl-
 
+      # OpenWrt skips host tools and the toolchain when their stamps exist in
+      # staging_dir. Caching those directories removes the ~40 min tools and
+      # gcc/musl rebuild on later runs of the same source commit and defconfig.
+      - name: Restore host tools and toolchain cache
+        if: ${{ inputs.clean_build == false }}
+        uses: actions/cache/restore@v4
+        id: toolchain-cache
+        with:
+          path: |
+            openwrt/staging_dir/host
+            openwrt/staging_dir/hostpkg
+            openwrt/staging_dir/toolchain-*
+          key: mainline-rgx60new-107m-toolchain-${{ runner.os }}-${{ steps.source.outputs.sha }}-${{ hashFiles('defconfig/mainline-rg-x60-new-107m.config') }}
+          restore-keys: |
+            mainline-rgx60new-107m-toolchain-${{ runner.os }}-${{ steps.source.outputs.sha }}-
+
       - name: Restore compiler cache
         if: ${{ inputs.clean_build == false }}
         uses: actions/cache/restore@v4
@@ -269,7 +285,7 @@ jobs:
           set -euo pipefail
           mkdir -p "$CCACHE_DIR"
           ccache --set-config=cache_dir="$CCACHE_DIR"
-          ccache --set-config=max_size=15G
+          ccache --set-config=max_size=4G
           ccache --set-config=compression=true
           ccache --zero-stats
 
@@ -399,6 +415,16 @@ jobs:
         if: always()
         shell: bash
         run: ccache --show-stats || true
+
+      - name: Save host tools and toolchain cache
+        if: ${{ always() && inputs.clean_build == false && steps.toolchain-cache.outputs.cache-hit != 'true' && hashFiles('openwrt/staging_dir/host/stamp/*', 'openwrt/staging_dir/toolchain-*/stamp/*') != '' }}
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            openwrt/staging_dir/host
+            openwrt/staging_dir/hostpkg
+            openwrt/staging_dir/toolchain-*
+          key: mainline-rgx60new-107m-toolchain-${{ runner.os }}-${{ steps.source.outputs.sha }}-${{ hashFiles('defconfig/mainline-rg-x60-new-107m.config') }}
 
       - name: Save compiler cache
         if: ${{ always() && inputs.clean_build == false && hashFiles('openwrt/.ccache/**') != '' }}
