@@ -88,6 +88,7 @@ jobs:
       - name: Save apt package cache
         if: ${{ steps.apt-cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v4
+        continue-on-error: true
         with:
           path: ~/apt-archives
           key: apt-archives-${{ runner.os }}-v1-${{ hashFiles('.github/workflows/build-mainline-rg-x60-new-107m.yml') }}
@@ -303,6 +304,7 @@ jobs:
       - name: Save source download cache
         if: ${{ always() && steps.dl-cache.outputs.cache-hit != 'true' && hashFiles('openwrt/dl/*') != '' }}
         uses: actions/cache/save@v4
+        continue-on-error: true
         with:
           path: openwrt/dl
           key: ${{ steps.dl-cache.outputs.cache-primary-key }}
@@ -419,6 +421,7 @@ jobs:
       - name: Save host tools and toolchain cache
         if: ${{ always() && inputs.clean_build == false && steps.toolchain-cache.outputs.cache-hit != 'true' && hashFiles('openwrt/staging_dir/host/stamp/*', 'openwrt/staging_dir/toolchain-*/stamp/*') != '' }}
         uses: actions/cache/save@v4
+        continue-on-error: true
         with:
           path: |
             openwrt/staging_dir/host
@@ -427,8 +430,9 @@ jobs:
           key: mainline-rgx60new-107m-toolchain-${{ runner.os }}-${{ steps.source.outputs.sha }}-${{ hashFiles('defconfig/mainline-rg-x60-new-107m.config') }}
 
       - name: Save compiler cache
-        if: ${{ always() && inputs.clean_build == false && hashFiles('openwrt/.ccache/**') != '' }}
+        if: ${{ always() && inputs.clean_build == false }}
         uses: actions/cache/save@v4
+        continue-on-error: true
         with:
           path: openwrt/.ccache
           key: mainline-rgx60new-107m-ccache-${{ runner.os }}-${{ steps.source.outputs.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
