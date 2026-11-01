@@ -370,10 +370,7 @@ jobs:
 
           image=$(find bin/targets/mediatek/filogic -maxdepth 1 -type f \
             -name '*ruijie_rg-x60-new-mtkuboot-squashfs-sysupgrade.bin' -print -quit)
-          initramfs=$(find bin/targets/mediatek/filogic -maxdepth 1 -type f \
-            -name '*ruijie_rg-x60-new-mtkuboot-initramfs-kernel.bin' -print -quit)
           test -n "$image"
-          test -n "$initramfs"
 
           mkdir -p ../artifacts
           kernel_config=$(find build_dir -type f \
@@ -385,7 +382,6 @@ jobs:
           fi
 
           cp "$image" "../artifacts/RG-X60-New-mainline-107M-sysupgrade.bin"
-          cp "$initramfs" "../artifacts/RG-X60-New-mainline-107M-initramfs-kernel.bin"
 
           manifest=$(find bin/targets/mediatek/filogic -maxdepth 1 -type f \
             -name '*ruijie_rg-x60-new-mtkuboot*.manifest' -print -quit || true)
