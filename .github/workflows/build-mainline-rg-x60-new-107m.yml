@@ -214,6 +214,8 @@ jobs:
             'net.ipv4.tcp_sack=1' \
             'net.core.rmem_max=33554432' \
             'net.core.wmem_max=33554432' \
+            'net.core.rmem_default=4194304' \
+            'net.core.wmem_default=4194304' \
             'net.ipv4.tcp_rmem=4096 131072 33554432' \
             'net.ipv4.tcp_wmem=4096 65536 33554432' \
             'net.core.netdev_max_backlog=10000' \
@@ -350,6 +352,8 @@ jobs:
             'net.core.wmem_max=33554432' \
             'net.ipv4.tcp_rmem=4096 131072 33554432' \
             'net.ipv4.tcp_wmem=4096 65536 33554432' \
+            'net.core.rmem_default=4194304' \
+            'net.core.wmem_default=4194304' \
             'net.core.netdev_max_backlog=10000'; do
             grep -Fxq "$line" "$sysctl_conf" || { echo "sysctl line missing in rootfs: $line" >&2; exit 1; }
           done
