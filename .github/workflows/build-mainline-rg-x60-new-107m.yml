@@ -23,7 +23,7 @@ concurrency:
 
 env:
   OPENWRT_REPO: https://github.com/immortalwrt/immortalwrt.git
-  OPENWRT_BRANCH: master
+  OPENWRT_BRANCH: openwrt-25.12
   OPENWRT_DIR: openwrt
   PROFILE: ruijie_rg-x60-new-mtkuboot
   CCACHE_DIR: ${{ github.workspace }}/openwrt/.ccache
@@ -173,7 +173,7 @@ jobs:
           fi
           echo "Kernel target config: $kconf"
 
-          # generic/config-6.18 sets CONFIG_DEFAULT_CUBIC=y; override it so the
+          # the generic kernel config sets CONFIG_DEFAULT_CUBIC=y; override it so the
           # BBR choice is the only default.
           printf '%s\n' \
             '' \
